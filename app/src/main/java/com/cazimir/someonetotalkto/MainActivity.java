@@ -2,32 +2,23 @@ package com.cazimir.someonetotalkto;
 
 import android.graphics.BitmapFactory;
 import android.os.Bundle;
-import android.os.Handler;
 import android.speech.tts.TextToSpeech;
+import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
-import android.view.View;
 import android.widget.Toast;
 
 import com.github.bassaer.chatmessageview.model.ChatUser;
 import com.github.bassaer.chatmessageview.model.Message;
 import com.github.bassaer.chatmessageview.view.ChatView;
+import com.hannesdorfmann.mosby3.mvi.MviActivity;
+import com.jakewharton.rxbinding2.view.RxView;
 
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.IOException;
 import java.util.Locale;
-import java.util.UUID;
 
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.HttpUrl;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
+import io.reactivex.Observable;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends MviActivity<IMainActivity, MainPresenter> implements IMainActivity {
 
     private static final String TAG = MainActivity.class.getSimpleName();
     private static final String ACCESS_TOKEN = "f1573cd929f0411296d9ab5de588fef1";
@@ -35,7 +26,6 @@ public class MainActivity extends AppCompatActivity {
     private ChatUser human;
     private ChatUser agent;
     private Message.Builder messageBuilder;
-    private OkHttpClient client = new OkHttpClient();
     private TextToSpeech textToSpeech;
 
     @Override
@@ -53,24 +43,12 @@ public class MainActivity extends AppCompatActivity {
 
         messageBuilder = new Message.Builder();
 
-        chatView.setOnClickSendButtonListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
+    }
 
-                messageBuilder = new Message.Builder();
-
-                Message message = messageBuilder
-                        .setUser(human)
-                        .setRight(false)
-                        .setText(chatView.getInputText())
-                        .build();
-
-                chatView.send(message);
-
-                askAgent(chatView.getInputText());
-
-            }
-        });
+    @NonNull
+    @Override
+    public MainPresenter createPresenter() {
+        return new MainPresenter(new AgentInteractor(new AgentEngine()));
     }
 
     private void initializeTts() {
@@ -92,57 +70,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void askAgent(String query) {
 
-        HttpUrl.Builder urlBuilder = HttpUrl.parse("https://api.dialogflow.com/v1/query").newBuilder();
-
-        urlBuilder.addQueryParameter("v", "20150910");
-        urlBuilder.addQueryParameter("query", query);
-        urlBuilder.addQueryParameter("lang", "en");
-        urlBuilder.addQueryParameter("sessionId", String.valueOf(UUID.randomUUID()));
-        urlBuilder.addQueryParameter("timezone", "America/New_York");
-
-        String url = urlBuilder.build().toString();
-
-        Request request = new Request.Builder()
-                .header("Authorization", "Bearer f1573cd929f0411296d9ab5de588fef1")
-                .url(url)
-                .build();
-
-
-        client.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                call.cancel();
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-
-                final String myResponse = response.body().string();
-
-                MainActivity.this.runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-
-                            JSONObject json = new JSONObject(myResponse);
-
-                            String text = json.getJSONObject("result").getJSONObject("fulfillment").getString("speech");
-
-                            showAgentResponse(text);
-                            speakTTS(text);
-
-                            Log.d(TAG, "received response: " + json);
-                        } catch (JSONException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                });
-
-            }
-        });
-    }
 
     private void speakTTS(String text) {
         textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null);
@@ -159,5 +87,57 @@ public class MainActivity extends AppCompatActivity {
                 .build();
 
         chatView.send(message);
+    }
+
+    @Override
+    public Observable<String> sendMessageToAgentIntent() {
+
+        return RxView.clicks(chatView.findViewById(R.id.sendButton))
+                .switchMap(obsolete -> buildMessage());
+    }
+
+    private Observable<String> buildMessage() {
+
+        messageBuilder = new Message.Builder();
+
+        Message message = messageBuilder
+                .setUser(human)
+                .setRight(false)
+                .setText(chatView.getInputText())
+                .build();
+
+        chatView.send(message);
+
+        return Observable.just(chatView.getInputText());
+    }
+
+    @Override
+    public void render(AgentViewState agentState) {
+
+        if(agentState instanceof AgentViewState.AgentReponse){
+            renderDataState(agentState);
+        } else if(agentState instanceof AgentViewState.Loading){
+            renderLoadingState();
+        } else{
+            renderErrorState(agentState);
+        }
+
+    }
+
+    private void renderErrorState(AgentViewState agentState) {
+        //display error message
+    }
+
+    private void renderLoadingState() {
+        Toast.makeText(this, "Loading...", Toast.LENGTH_SHORT).show();
+        //show some kind of progressbar. perhaps a 3 dot loading indicator
+    }
+
+    private void renderDataState(AgentViewState agentState) {
+        AgentViewState.AgentReponse reponse = (AgentViewState.AgentReponse) agentState;
+        showAgentResponse(reponse.getResult());
+
+
+        //get string from agent and show it in chat view
     }
 }
